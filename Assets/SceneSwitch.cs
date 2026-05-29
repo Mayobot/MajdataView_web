@@ -1,11 +1,11 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 
-public class PlayButton : MonoBehaviour
+public class SceneSwitch : MonoBehaviour
 {
+    public int target = -1;
     // Start is called before the first frame update
     void Start()
     {
@@ -15,14 +15,6 @@ public class PlayButton : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        
-    }
-    public void Click()
-    {
-        playChart();
-    }
-    public void playChart()
-    {
-        SceneManager.LoadScene("main");
+        if(target != -1)SceneManager.LoadScene(target);
     }
 }

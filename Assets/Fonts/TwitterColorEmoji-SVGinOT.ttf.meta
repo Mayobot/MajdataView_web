@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: c9496eb91b301cc43b2550ed60109d6d
+guid: 09647b496295d654d802bd50c36d5ba4
 TrueTypeFontImporter:
   externalObjects: {}
   serializedVersion: 4
@@ -9,7 +9,7 @@ TrueTypeFontImporter:
   characterPadding: 1
   includeFontData: 1
   fontNames:
-  - Courier Prime
+  - Twitter Color Emoji
   fallbackFontReferences: []
   customCharacters: 
   fontRenderingMode: 0

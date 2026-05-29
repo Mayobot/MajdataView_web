@@ -9,260 +9,505 @@ using System.IO;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using TMPro;
+using API;
 
 public class GameMainManager : MonoBehaviour
 {
     [Header("Manager")]
-    public SimaiDataLoader loader;
+    public SimaiDataLoader simailoader;
     public AudioTimeProvider timeProvider;
     public BGManager bgManager;
     public SpriteRenderer bgCover;
     public MultTouchHandler multTouchHandler;
     public ObjectCounter objectCounter;
     public Transform Notes;
-    public GameObject SongDetail;
     public SoundEffect SE;
     public MenuManager menuManager;
     public SettingsManager settings;
-    
+
     [Space(10)]
     [Header("AudioRef")]
     public AudioSource bgm;
 
     [Space(10)]
     [Header("Settings")]
-    public int difficulty = 0;
     public float startTime = 0f;
-    public long startAt;
     public float audioSpeed = 1f;
     public float offset;
-    
+
     [Space(10)]
     [Header("Debug")]
     public string editorInitPath;
 
     private bool inited = false;
     private int status = 0;
+    private Coroutine videoSeekCoroutine;
+    private int videoSeekGeneration = 0;
 
-    string id;
-    string chartpath;
-    string bgpath;
-    string audiopath;
-
-
-    void Start()
+    public void Play()
     {
-        id = PlayerPrefs.GetString("id");
-        //string MMFCpath = "https://www.maimaimfc.ink/_functions/contestList";
-        chartpath = "https://www.maimaimfc.ink/_functions/contestEntry/" + id + "/1";
-        audiopath = "https://www.maimaimfc.ink/_functions/contestEntry/" + id + "/2";
-        bgpath = "https://www.maimaimfc.ink/_functions/contestEntry/" + id + "/3";
-        //StartCoroutine(getMMFCList(MMFCpath));
-        WebUpload();
-
-    }
-    // init loading & start playing method
-    public void ChickStart()
-    {
-        startAt = System.DateTime.Now.Ticks;
-        loader.noteSpeed = (float)(107.25 / (71.4184491 * Mathf.Pow(settings.noteSpeed + 0.9975f, -0.985558604f)));
-        loader.touchSpeed = settings.touchSpeed;
-        timeProvider.audioOffset = settings.offset;
-        timeProvider.SetStartTime(startAt, startTime - offset, audioSpeed, menuManager.isRecord);
+        simailoader.noteSpeed = settings.noteSpeed;
+        simailoader.touchSpeed = settings.touchSpeed;
+        simailoader.PlayLevel(startTime);
+        timeProvider.SetStartTime(startTime - offset, audioSpeed);
         objectCounter.ComboSetActive(settings.combo);
-        loader.PlayLevel(menuManager.level, startTime);
         multTouchHandler.clearSlots();
-        bgCover.color = new Color(0f, 0f, 0f, settings.bgCover);
+        Notes.GetComponent<PlayAllPerfect>().enabled = false;
+        inited = true;
+        menuManager.SetPlayMode();
 
-        if (menuManager.isRecord)
+        QueueVideoSeek(startTime, true, "Play");
+    }
+
+    public void OnPlayPauseButtonClick()
+    {
+        if (!inited)
         {
-            Notes.GetComponent<PlayAllPerfect>().enabled = true;
-            // disable playpause btn to prevent errors
-            bgManager.PlaySongDetail();
+            Play();
+            return;
+        }
+
+        if (timeProvider.isStart)
+        {
+            startTime = timeProvider.AudioTime;
+            timeProvider.playStartTime = startTime;
+            timeProvider.Pause();
+
+            if (bgManager != null && bgManager.videoPlayer != null && bgManager.videoPlayer.isPrepared)
+            {
+                bgManager.videoPlayer.Pause();
+                bgManager.SetIdleVideoFrameVisible(true, "Pause");
+            }
+
+            menuManager.SetPauseMode();
         }
         else
         {
-            Notes.GetComponent<PlayAllPerfect>().enabled = false;
-        }
-        inited = true;
-        // set btn states
-        menuManager.SetPlayMode();
-        menuManager.HideMenu();
-    }
-
-    // callback of play/pause button
-    public void TogglePlay()
-    {
-        if (!inited) {ChickStart();return;}
-        if (timeProvider.isStart) {
-            timeProvider.Pause();
-            bgManager.PauseVideo();
-            menuManager.SetPauseMode();
-        } else {
             timeProvider.Resume();
-            bgManager.ContinueVideo(audioSpeed);
+            QueueVideoSeek(startTime, true, "Resume");
             menuManager.SetPlayMode();
         }
     }
 
-    // callback of stop button
-    public void ChickStop()
+    public void OnStopButtonClick()
     {
-        // hide bgcover
-        bgCover.color = new Color(0f, 0f, 0f, 0f);
-        // reset audiotime
+        OnStopButtonClick(true);
+    }
+
+    public void OnStopButtonClick(bool stopVideo)
+    {
+        if (bgCover != null)
+        {
+            bgCover.color = new Color(0f, 0f, 0f, 0f);
+        }
+
+        if (timeProvider != null)
+        {
+            timeProvider.ResetStartTime();
+            timeProvider.AudioTime = 0f;
+            timeProvider.playStartTime = 0f;
+        }
+
         startTime = 0f;
-        timeProvider.ResetStartTime();
-        // destroy all notes
-        foreach (Transform child in Notes.transform) {
-            GameObject.Destroy(child.gameObject);
+
+        if (Notes != null)
+        {
+            foreach (Transform child in Notes.transform)
+            {
+                GameObject.Destroy(child.gameObject);
+            }
         }
-        // disable songdetail
-        SongDetail.SetActive(false);
-        // re-init on next start
+
         inited = false;
-        // reset counter
-        objectCounter.Reset();
-        // set btn states
-        menuManager.SetReadyMode();
-    }
 
-    // callback of upload button
-    public void ChickLoad()
-    {
-        /* #if UNITY_EDITOR
-             EditorLoad();
-         #elif UNITY_WEBGL
-             WebUpload();
-         #endif*/
-
-        SceneManager.LoadScene("SongLstMenu");
-
-
-    }
-
-    void EditorLoad()
-    {
-        if (status == 0)
+        if (objectCounter != null)
         {
-            loader.initFromFile(editorInitPath);
-            Action audioCallback = () =>
-            {
-                menuManager.SetReadyMode();
-                UpdateLevel();
-                status = 3;
-            };
-            StartCoroutine(SE.LoadWebAudio(editorInitPath+"\\track.mp3", audioCallback));
-        } else if (status == 3)
-        // reset
-        {SceneManager.LoadScene(0, LoadSceneMode.Single);}
-    }
-
-    public void WebUpload()
-    {
-        if (status == 0)
-        {
-            // open maidata.txt
-            Action successCallback = () =>
-            {
-                status = 1;
-                WebUpload();
-
-            };
-
-            StartCoroutine(loader.initFromWeb(chartpath, successCallback));
+            objectCounter.Reset();
         }
-        else if(status == 1)
+
+        if (menuManager != null)
         {
-            Action audioCallback = () =>
-            {
-                status = 2;
-                WebUpload();
-            };
-   
-            StartCoroutine(SE.LoadWebAudio(audiopath, audioCallback));
+            menuManager.SetReadyMode();
         }
-        else if (status == 2)
+
+        if (stopVideo)
         {
-            Action bgCallback = () =>
-            {
-                menuManager.SetReadyMode();
-                UpdateLevel();
-                status = 3;
-
-            };
-
-            StartCoroutine(bgManager.LoadBGFromWeb(bgpath, bgCallback));
+            SafeStopVideoPlayer("OnStopButtonClick");
         }
-        
-            
-            
-            //WebFileUploaderHelper.RequestFile(uploadedCallback, ".txt");
-        
-        
-        else if (status == 3)
-        // reset
-
-        {  Debug.Log(status); SceneManager.LoadScene("SongLstMenu");}
-
-    }
-    [Serializable]
-    public class SongList
-    {
-        public List<SongInfo> info;
-    }
-    [Serializable]
-    public class SongInfo
-    {
-        public string Title;
-        public string sequenceID;
     }
 
-    public IEnumerator getMMFCList(string path)
+    private void SafeStopVideoPlayer(string reason)
     {
-        if (path == string.Empty) { Debug.LogError("Empty path!"); yield break; }
-        Debug.Log("Downloading song list from " + path);
-        UnityWebRequest www = UnityWebRequest.Get(path);
-        yield return www.SendWebRequest();
-
-        if (www.result != UnityWebRequest.Result.Success)
+        if (bgManager == null || bgManager.videoPlayer == null)
         {
-            Debug.LogError("Error downloading data: " + www.error);
+            return;
+        }
+
+        var videoPlayer = bgManager.videoPlayer;
+
+        if (!videoPlayer.isPrepared && !videoPlayer.isPlaying)
+        {
+            bgManager.SetIdleVideoFrameVisible(false, reason + ":NotPrepared");
+            return;
+        }
+
+        try
+        {
+            videoPlayer.Pause();
+            videoPlayer.time = 0d;
+            bgManager.SetIdleVideoFrameVisible(true, reason + ":ResetToFirstFrame");
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    public void WebLoad(string chartpath, string bgpath, string audiopath, string videopath, int level)
+    {
+        StopAllCoroutines();
+        OnStopButtonClick(false);
+        timeProvider.AudioTime = 0f;
+        timeProvider.playStartTime = 0f;
+        menuManager.SetInitMode();
+        bgManager.isAnyErr = false;
+        bgManager.SetIdleVideoFrameVisible(false, "WebLoadReset");
+
+        var hasVideo = !string.IsNullOrWhiteSpace(videopath);
+        if (hasVideo)
+        {
+            bgManager.videoPlayer.url = videopath;
         }
         else
         {
-            string songs = "{\"info\":" + www.downloadHandler.text + "}";
-            Debug.Log(songs);
-            SongList songlist = JsonUtility.FromJson<SongList>(songs);
-            Debug.Log(songlist.info[0].Title);
+            bgManager.videoPlayer.url = string.Empty;
+            bgManager.UseStaticBackground("NoVideo");
         }
-    }
 
-    // method that checks if level is empty
-    public void UpdateLevel()
-    {
-        int levelIndex = menuManager.level;
-        Debug.Log("finding level: " + levelIndex);
-        string fumens = SimaiProcess.fumens[levelIndex];
-        if (fumens == null)
+        status = 0;
+
+        void checkReady()
         {
-            Debug.Log("Null level!");
-            menuManager.DisablePlay();
+            menuManager.SetLoadingText(status);
+            if (status >= 4f)
+            {
+                menuManager.SetReadyMode();
+                string fumens = SimaiProcess.fumens[level];
+                if (fumens == null)
+                {
+                    Debug.Log("Null level!");
+                    menuManager.DisablePlay();
+                    return;
+                }
+                if (SimaiProcess.Serialize(fumens) == -1)
+                {
+                    menuManager.DisablePlay();
+                    return;
+                }
+                if (SimaiProcess.notelist.Count <= 0)
+                {
+                    Debug.Log("Empty level!");
+                    menuManager.DisablePlay();
+                    return;
+                }
+                else
+                {
+                    menuManager.SetReadyMode();
+                }
+            }
+        }
+
+        Action videoCallback = () =>
+        {
+            status += 1;
+            checkReady();
+        };
+
+        if (hasVideo)
+        {
+            StartCoroutine(WaitVideoPrepare(videoCallback));
         }
         else
         {
-            if (SimaiProcess.Serialize(fumens) == -1) 
+            videoCallback.Invoke();
+        }
+
+        Action successCallback = () =>
+        {
+            status += 1;
+            checkReady();
+        };
+
+        StartCoroutine(simailoader.initFromWeb(chartpath, successCallback));
+
+        Action audioCallback = () =>
+        {
+            status += 1;
+            checkReady();
+        };
+
+        Action<float> progressCallback = (float progress) =>
+        {
+            menuManager.SetLoadingText(status, progress);
+        };
+
+        StartCoroutine(SE.LoadWebAudio(audiopath, progressCallback, audioCallback));
+
+        Action bgCallback = () =>
+        {
+            status += 1;
+            checkReady();
+        };
+
+        StartCoroutine(WebLoader.LoadBGFromWeb(bgpath, bgCallback));
+    }
+
+    IEnumerator WaitVideoPrepare(Action callback)
+    {
+        bgManager.videoPlayer.Prepare();
+        var prepareStartTime = Time.time;
+        while (!bgManager.videoPlayer.isPrepared)
+        {
+            yield return new WaitForEndOfFrame();
+            if (Time.time - prepareStartTime > 2f)
             {
-            menuManager.DisablePlay();
-                return;
+                bgManager.UseStaticBackground("PrepareTimeout");
+                callback.Invoke();
+                StartCoroutine(SeeIfitisDoneLater());
+                yield break;
             }
-            Debug.Log("Total notes: "+SimaiProcess.notelist.Count);
-            if (SimaiProcess.notelist.Count <= 0)
+        }
+
+        bgManager.UpdateVideoRatio();
+        yield return StartCoroutine(ShowPreparedVideoFirstFrame());
+        callback.Invoke();
+    }
+
+    IEnumerator ShowPreparedVideoFirstFrame()
+    {
+        if (bgManager == null || bgManager.videoPlayer == null || !bgManager.videoPlayer.isPrepared)
+        {
+            yield break;
+        }
+
+        try
+        {
+            bgManager.videoPlayer.time = 0d;
+            bgManager.videoPlayer.Play();
+        }
+        catch (Exception)
+        {
+            yield break;
+        }
+
+        yield return null;
+        yield return new WaitForEndOfFrame();
+
+        try
+        {
+            bgManager.videoPlayer.Pause();
+            bgManager.videoPlayer.time = 0d;
+            bgManager.SetIdleVideoFrameVisible(true, "ShowPreparedVideoFirstFrame");
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    IEnumerator SeeIfitisDoneLater()
+    {
+        while (!bgManager.videoPlayer.isPrepared)
+        {
+            yield return new WaitForEndOfFrame();
+        }
+        bgManager.UpdateVideoRatio();
+        yield return StartCoroutine(ShowPreparedVideoFirstFrame());
+    }
+
+    private void QueueVideoSeek(float timelineSeconds, bool playAfterSeek, string reason)
+    {
+        if (bgManager == null || bgManager.videoPlayer == null)
+        {
+            return;
+        }
+
+        if (!bgManager.videoPlayer.isPrepared)
+        {
+            return;
+        }
+
+        if (videoSeekCoroutine != null)
+        {
+            StopCoroutine(videoSeekCoroutine);
+        }
+
+        videoSeekGeneration++;
+        videoSeekCoroutine = StartCoroutine(SeekVideoToTimelineCoroutine(videoSeekGeneration, timelineSeconds, playAfterSeek, reason));
+    }
+
+    private IEnumerator SeekVideoToTimelineCoroutine(int generation, float timelineSeconds, bool playAfterSeek, string reason)
+    {
+        var player = bgManager.videoPlayer;
+        var videoTime = Mathf.Max(0f, timelineSeconds - offset);
+
+        if (player.length > 0d)
+        {
+            videoTime = Mathf.Min(videoTime, (float)player.length);
+        }
+
+        var seekDone = false;
+
+        void OnSeekCompleted(UnityEngine.Video.VideoPlayer source)
+        {
+            seekDone = true;
+        }
+
+        player.seekCompleted += OnSeekCompleted;
+
+        try
+        {
+            player.Pause();
+            bgManager.SetIdleVideoFrameVisible(true, reason + ":SeekStart");
+            player.time = videoTime;
+        }
+        catch (Exception)
+        {
+            player.seekCompleted -= OnSeekCompleted;
+            yield break;
+        }
+
+        var waitStart = Time.realtimeSinceStartup;
+        while (!seekDone && generation == videoSeekGeneration && Time.realtimeSinceStartup - waitStart < 2f)
+        {
+            yield return null;
+        }
+
+        player.seekCompleted -= OnSeekCompleted;
+
+        if (generation != videoSeekGeneration)
+        {
+            yield break;
+        }
+
+        if (playAfterSeek)
+        {
+            if (player.canSetPlaybackSpeed)
             {
-                Debug.Log("Empty level!");
-                menuManager.DisablePlay();
+                player.playbackSpeed = audioSpeed;
             }
-            else {menuManager.SetReadyMode();}
+            player.Play();
+            bgManager.SetIdleVideoFrameVisible(false, reason + ":PlayAfterSeek");
+        }
+        else
+        {
+            player.Play();
+            yield return new WaitForEndOfFrame();
+
+            if (generation != videoSeekGeneration)
+            {
+                yield break;
+            }
+
+            player.Pause();
+            bgManager.SetIdleVideoFrameVisible(true, reason + ":PausedFrame");
+        }
+
+        videoSeekCoroutine = null;
+    }
+
+    public void WebSeek(float seconds)
+    {
+        var target = Mathf.Max(0f, seconds);
+        var wasPlaying = inited && timeProvider != null && timeProvider.isStart;
+
+        startTime = target;
+
+        if (wasPlaying)
+        {
+            timeProvider.Pause();
+        }
+
+        if (inited)
+        {
+            foreach (Transform child in Notes.transform)
+            {
+                GameObject.Destroy(child.gameObject);
+            }
+            simailoader.PlayLevel(target);
+        }
+
+        QueueVideoSeek(target, wasPlaying, "WebSeek");
+
+        if (wasPlaying)
+        {
+            timeProvider.SetStartTime(Mathf.Max(0f, target - offset), audioSpeed);
+            menuManager.SetPlayMode();
+        }
+        else
+        {
+            timeProvider.AudioTime = target;
+            timeProvider.playStartTime = target;
+            menuManager.SetPauseMode();
+        }
+    }
+
+    public void WebSetPlaybackSpeed(string rawSpeed)
+    {
+        float speed;
+        if (!float.TryParse(rawSpeed, out speed))
+        {
+            return;
+        }
+
+        audioSpeed = Mathf.Clamp(speed, 0.25f, 2f);
+
+        var timeline = startTime;
+        var wasPlaying = false;
+
+        if (timeProvider != null)
+        {
+            timeline = Mathf.Max(0f, timeProvider.AudioTime);
+            wasPlaying = inited && timeProvider.isStart;
+
+            if (wasPlaying)
+            {
+                timeProvider.Pause();
+                startTime = timeline;
+                timeProvider.SetStartTime(Mathf.Max(0f, timeline - offset), audioSpeed);
+            }
+        }
+
+        if (bgManager != null && bgManager.videoPlayer != null && bgManager.videoPlayer.isPrepared)
+        {
+            if (bgManager.videoPlayer.canSetPlaybackSpeed)
+            {
+                bgManager.videoPlayer.playbackSpeed = audioSpeed;
+            }
+
+            if (wasPlaying)
+            {
+                QueueVideoSeek(timeline, true, "PlaybackSpeed");
+            }
+        }
+    }
+
+    public void WebRefreshTimelineAfterVisualSpeedChange(string reason)
+    {
+        if (!inited || timeProvider == null)
+        {
+            return;
+        }
+
+        var timeline = Mathf.Max(0f, timeProvider.AudioTime);
+        WebSeek(timeline);
+    }
+
+    public void OnSpeedDropDownClick(int value)
+    {
+        audioSpeed = 1f - value * 0.25f;
+
+        if (bgManager != null && bgManager.videoPlayer != null && bgManager.videoPlayer.isPrepared && bgManager.videoPlayer.canSetPlaybackSpeed)
+        {
+            bgManager.videoPlayer.playbackSpeed = audioSpeed;
         }
     }
 }
